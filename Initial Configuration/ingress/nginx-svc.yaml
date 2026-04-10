@@ -1,0 +1,94 @@
+# Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nginx-deployment
+  labels:
+    app: nginx
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+     app: nginx
+  template:
+    metadata:
+      labels:
+        app: nginx
+    spec:
+      containers:
+      - name: nginx 
+        image: nginx:latest
+        ports:
+        - containerPort: 80
+        resources:           # HPA 작동을 위해 반드시 추가해야 함
+          requests:
+            cpu: "100m"      # 0.1 CPU를 기준으로 요청
+          limits:
+            cpu: "200m"
+
+---
+# SVC
+apiVersion: v1
+kind: Service
+metadata:
+  name: nginx-service
+spec:
+  selector:
+    app: nginx
+  ports:
+    - protocol: TCP
+      port: 80      
+      targetPort: 80    
+  type: ClusterIP
+
+---
+# LoadBalancer
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: nginx-alb-ingress
+  annotations: # 주석: k8s가 알아보기위한 주석
+    # internet-facing: 외부 로드밸런서
+    # internal: 내부 로드밸런서
+    alb.ingress.kubernetes.io/scheme: internet-facing # ALB의 스킴을 인터넷으로 설정
+    # ip: IP 주소를 대상으로 하는 타겟 그룹 생성
+    # instance: EC2 인스턴스(NodePort)를 대상으로 하는 타겟 그룹 생성
+    alb.ingress.kubernetes.io/target-type: ip  # ALB가 IP 주소를 대상으로 사용하도록 설정
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTP":80}, {"HTTPS": 443}]'
+    alb.ingress.kubernetes.io/success-codes: "200-399"
+    alb.ingress.kubernetes.io/certificate-arn: "인증서 arn"
+    alb.ingress.kubernetes.io/ssl-redirect: "443"
+    alb.ingress.kubernetes.io/security-groups: 보안그룹 아이디
+spec:
+  ingressClassName: alb # ALB Ingress Controller가 이 Ingress 리소스를 처리하도록 지정
+  rules:
+    - http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: nginx-service # Ingress가 트래픽을 라우팅 할 서비스 이름
+                port:
+                  number: 80
+
+---
+# HPA
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: nginx-hpa
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: nginx-deployment
+  minReplicas: 1
+  maxReplicas: 6
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu # 오토스케일링(Scaling)의 기준이 되는 자원을 CPU로 지정
+      target:
+        type: Utilization # 백분율(%)을 기준으로 삼겠다는 의미
+        averageUtilization: 50

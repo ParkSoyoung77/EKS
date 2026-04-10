@@ -1,0 +1,27 @@
+# externaldns.yaml (Deployment 부분만 집중!)
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: external-dns
+spec:
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: external-dns
+  template:
+    metadata:
+      labels:
+        app: external-dns
+    spec:
+      # 위에서 eksctl로 만든 전용 계정 이름을 사용합니다!
+      serviceAccountName: external-dns 
+      containers:
+      - name: external-dns
+        image: registry.k8s.io/external-dns/external-dns:v0.14.0
+        args:
+        - --source=ingress
+        - --domain-filter=도메인 주소
+        - --provider=aws
+        - --aws-zone-type=public
+        - --txt-owner-id=eks-identifier 

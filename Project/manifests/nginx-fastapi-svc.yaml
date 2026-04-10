@@ -1,0 +1,179 @@
+# Nginx Deployment (VPC-2: 메인 / VPC-3: 회사소개)
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nginx-deployment
+spec:
+  replicas: 1 # 기본 1
+  selector:
+    matchLabels:
+      app: nginx
+  template:
+    metadata:
+      labels:
+        app: nginx
+    spec:
+      containers:
+      - name: nginx
+        image: # ECR 이미지
+        ports:
+        - containerPort: 80
+        resources:
+          requests:
+            cpu: "100m"
+            memory: "128Mi"
+          limits:
+            cpu: "200m"
+            memory: "256Mi"
+---
+# Nginx HPA (최소 1, 최대 2)
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: nginx-hpa
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: nginx-deployment
+  minReplicas: 1
+  maxReplicas: 2
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 70
+---
+# FastAPI Deployment (VPC-2: 게시판 / VPC-3: 방명록)
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: fastapi-deployment
+spec:
+  replicas: 2 # 기본 2
+  selector:
+    matchLabels:
+      app: fastapi
+  template:
+    metadata:
+      labels:
+        app: fastapi
+    spec:
+      containers:
+      - name: fastapi
+        image: # ECR 이미지
+        ports:
+        - containerPort: 8000
+        resources:
+          requests:
+            cpu: "150m"
+            memory: "256Mi"
+          limits:
+            cpu: "300m"
+            memory: "512Mi"
+---
+# FastAPI HPA (최소 1, 최대 3)
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: fastapi-hpa
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: fastapi-deployment
+  minReplicas: 1
+  maxReplicas: 3
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 70
+---
+# Nginx용 서비스
+apiVersion: v1
+kind: Service
+metadata:
+  name: nginx-service
+spec:
+  selector:
+    app: nginx
+  ports:
+    - port: 80
+      targetPort: 80
+---
+# FastAPI용 서비스
+apiVersion: v1
+kind: Service
+metadata:
+  name: fastapi-service
+spec:
+  selector:
+    app: fastapi
+  ports:
+    - port: 8000
+      targetPort: 8000
+---
+# Ingress (www.sy99.cloud)
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: sy-main-ingress
+  annotations:
+    alb.ingress.kubernetes.io/scheme: internet-facing
+    alb.ingress.kubernetes.io/target-type: ip
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTP": 80}, {"HTTPS": 443}]'
+    alb.ingress.kubernetes.io/certificate-arn: "arn"
+    alb.ingress.kubernetes.io/ssl-redirect: "443"
+    # FastAPI가 / 경로에 반응하지 않을 경우를 대비한 헬스체크 경로
+    alb.ingress.kubernetes.io/healthcheck-path: /board
+spec:
+  ingressClassName: alb
+  rules:
+    - host: "www.sy99.cloud"
+      http:
+        paths:
+          # VPC-2 (Main)
+          - path: /
+            pathType: Exact
+            backend:
+              service:
+                name: nginx-service
+                port:
+                  number: 80
+          # VPC-2 (Board)
+          - path: /board
+            pathType: Prefix
+            backend:
+              service:
+                name: fastapi-service
+                port:
+                  number: 8000
+          # VPC-3 (Company)
+          - path: /company
+            pathType: Prefix
+            backend:
+              service:
+                name: nginx-service
+                port:
+                  number: 80
+          # VPC-3 (Guestbook) - main.py의 @app.get("/guest")와 일치
+          - path: /guestbook
+            pathType: Prefix
+            backend:
+              service:
+                name: fastapi-service
+                port:
+                  number: 8000
+          # API 공통 경로 (VPC-2/3 공통 사용)
+          - path: /api
+            pathType: Prefix
+            backend:
+              service:
+                name: fastapi-service
+                port:
+                  number: 8000

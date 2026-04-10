@@ -1,0 +1,49 @@
+############################################################################
+# VPC ID / Public Subnet ID / Private Subnet ID / Shared Sercurity Group ID
+# VPC ID: VPC ID
+# ap-south-2a: 퍼블릭 ID / 프라이빗 ID
+# ap-south-2b: 퍼블릭 ID / 프라이빗 ID
+# ap-south-2c: 퍼블릭 ID / 프라이빗 ID
+# Security Group ID: http 보안그룹 ID
+############################################################################
+apiVersion: eksctl.io/v1alpha5
+kind: ClusterConfig
+metadata:
+  name: cluster-basic-v1 # 클러스터 이름
+  region: ap-south-2         # 클러스터가 생성될 AWS리전(하이데라바드)
+iam:
+  withOIDC: true  # OIDC 공급자 활성화하여 클러스터에서 IAM 역할을 서비스 계정에 연결할 수 있도록 설정
+
+vpc:
+  id: "VPC ID" 
+  clusterEndpoints:
+    publicAccess: true    # 외부에서 eksctl/kubectl로 API 서버에 접근 가능하도록 설정
+    privateAccess: true   # VPC 내부에서만 API 서버에 접근 가능하도록 설정(내부 마스터-워커노드 간 통신)
+  subnets: 
+    public:   # eksctl로 생성한 클러스터에서 관리하는 노드 그룹이 사용할 퍼블릭 서브넷 지정
+      ap-south-2a: { id: "퍼블릭 ID" } 
+      ap-south-2b: { id: "퍼블릭 ID" }
+      ap-south-2c: { id: "퍼블릭 ID" }
+    private:  # eksctl로 클러스터 구성에 사용할 프라이빗 서브넷을 지정
+      ap-south-2a: { id: "프라이빗 ID" }
+      ap-south-2b: { id: "프라이빗 ID" }
+      ap-south-2c: { id: "프라이빗 ID" }
+
+managedNodeGroups:  # 워커 노드 설정
+  - name: ng-1
+    instanceType: t3.medium
+    desiredCapacity: 2  # 클러스터 생성 시, 2개의 노드로 시작하도록 설정
+    minSize: 1    # 노드 그룹의 최소 크기를 1로 설정
+    maxSize: 3    # 노드 그룹의 최대 크기를 3으로 설정
+    privateNetworking: true # 프라이빗 서브넷에 노드 그룹을 생성하도록 설정
+    ssh:
+      allow: true # SSH 액세스 허용
+      publicKeyName: st7-key # SSH 액세스에 사용할 EC2 키
+    securityGroups:
+      attachIDs: ["http 보안그룹 ID"] # 노드 그룹에 연결할 보안 그룹 ID
+    iam:
+      withAddonPolicies:
+        autoScaler: true   # Cluster Autoscaler에 필요한 IAM 정책 추가
+        imageBuilder: true # EKS 노드 이미지 빌더(AMI 생성,관리 자동화 서비스)에 필요한 IAM 정책 추가
+        cloudWatch: true   # CloudWatch에 필요한 IAM 정책 추가
+        albIngress: true   # ALB Ingress Controller에 필요한 IAM 정책 추가

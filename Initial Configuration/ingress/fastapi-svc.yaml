@@ -1,0 +1,174 @@
+# 1. FastAPI Deployment (API 서버 독립)
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: fastapi-deployment
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: fastapi
+  template:
+    metadata:
+      labels:
+        app: fastapi
+    spec:
+      containers:
+      - name: fastapi
+        image: 도커이미지 ERC 빌드
+        ports:
+        - containerPort: 8000
+        resources: # HPA 작동을 위해 리소스 제한 추가 권장
+          requests:
+            cpu: "100m"
+
+---
+# 2. FastAPI Service (내부 및 외부 통로)
+apiVersion: v1
+kind: Service
+metadata:
+  name: fastapi-service
+spec:
+  selector:
+    app: fastapi
+  ports:
+    - port: 8000
+      targetPort: 8000
+  type: ClusterIP
+
+---
+# 3. Nginx Deployment (정적 웹 서버 독립)
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nginx-deployment
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: nginx
+  template:
+    metadata:
+      labels:
+        app: nginx
+    spec:
+      containers:
+      - name: nginx
+        image: 도커이미지 ERC 빌드
+        ports:
+        - containerPort: 80
+        resources:
+          requests:
+            cpu: "100m"
+
+---
+# 4. Nginx Service (웹 접속 통로)
+apiVersion: v1
+kind: Service
+metadata:
+  name: nginx-service
+spec:
+  selector:
+    app: nginx
+  ports:
+    - port: 80
+      targetPort: 80
+  type: ClusterIP
+
+---
+# 1. Nginx용 Ingress (ALB #1 생성)
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: nginx-only-ingress
+  annotations:
+    alb.ingress.kubernetes.io/scheme: internet-facing
+    alb.ingress.kubernetes.io/target-type: ip
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTP":80}, {"HTTPS": 443}]'
+    alb.ingress.kubernetes.io/certificate-arn: "인증서 arn"
+    alb.ingress.kubernetes.io/ssl-redirect: "443"
+    alb.ingress.kubernetes.io/security-groups: 보안그룹 아이디
+spec:
+  ingressClassName: alb
+  rules:
+    - host: # Nginx 전용 도메인
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: nginx-service
+                port:
+                  number: 80
+
+---
+# 2. FastAPI용 Ingress (ALB #2 생성)
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: fastapi-only-ingress
+  annotations:
+    alb.ingress.kubernetes.io/scheme: internet-facing
+    alb.ingress.kubernetes.io/target-type: ip
+    # API 전용이므로 8000번 포트나 표준 443 사용 권장
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTP": 80}, {"HTTPS": 443}]'
+    alb.ingress.kubernetes.io/certificate-arn: "인증서 arn"
+    alb.ingress.kubernetes.io/ssl-redirect: "443"
+    alb.ingress.kubernetes.io/security-groups: 보안그룹 아이디
+spec:
+  ingressClassName: alb
+  rules:
+    - host: # FastAPI 전용 도메인
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: fastapi-service
+                port:
+                  number: 8000
+
+---
+# Nginx용 HPA
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: nginx-hpa
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: nginx-deployment
+  minReplicas: 1
+  maxReplicas: 6
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu # 오토스케일링(Scaling)의 기준이 되는 자원을 CPU로 지정
+      target:
+        type: Utilization # 백분율(%)을 기준으로 삼겠다는 의미
+        averageUtilization: 50
+
+
+---
+# FastAPI용 HPA
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: fastapi-hpa
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: fastapi-deployment
+  minReplicas: 2 # 무중단 배포를 위해 최소 2개 권장
+  maxReplicas: 10
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 60
